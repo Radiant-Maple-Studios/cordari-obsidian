@@ -28,13 +28,11 @@ to Cordari.
 
 ## Install
 
-### From the community plugin marketplace (once listed)
-
 1. Obsidian → Settings → Community plugins → Browse.
 2. Search for **Cordari**, install, enable.
 3. Open the plugin's settings and click **Connect to Cordari**.
 
-### Side-load (for testing or while the marketplace listing is pending)
+### Local build (for development)
 
 1. Build: `npm install && npm run build` from the repo root.
 2. Copy `dist/main.js`, `manifest.json`, and `styles.css` into
