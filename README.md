@@ -62,7 +62,7 @@ requires re-linking next time.
 ## Support
 
 File issues at
-[github.com/rsteckler/cordari-cloud](https://github.com/rsteckler/cordari-cloud/issues)
+[github.com/Radiant-Maple-Studios/cordari-obsidian](https://github.com/Radiant-Maple-Studios/cordari-obsidian/issues)
 or reach out via [app.cordari.ai](https://app.cordari.ai).
 
 ## License
