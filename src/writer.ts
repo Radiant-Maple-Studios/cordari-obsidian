@@ -1,6 +1,6 @@
 import { normalizePath, TFile, type App } from "obsidian";
 import { CORDARI_SERVER_URL } from "./api.js";
-import type { RecordingDetail } from "./types.js";
+import type { NoteDetailResponse, NoteSummary, RecordingDetail } from "./types.js";
 
 // Writes the per-recording markdown + audio into the vault and keeps them
 // up to date on re-sync. Lookup by `cordari_id` in YAML frontmatter so
@@ -24,6 +24,25 @@ import type { RecordingDetail } from "./types.js";
  *        fully rewritten on the next pass.
  */
 export const WRITER_VERSION = 3;
+
+/**
+ * Note-side analog of WRITER_VERSION. Notes are a separate file shape
+ * (no audio, recognized markdown + summaries) and live in a subfolder;
+ * versioning them separately means recording-layout tweaks don't churn
+ * every note file and vice versa.
+ *
+ * History:
+ *   v1 — initial notes support (COR-319 PR 8b): YAML + recognized text
+ *        + summary sections + "Open in Cordari" footer.
+ */
+export const NOTE_WRITER_VERSION = 1;
+
+/**
+ * Notes live in this subfolder under the configured root so they don't
+ * commingle with recording markdown files. Same root → easy to point
+ * Obsidian Dataview / Templater at either set independently.
+ */
+export const NOTES_SUBFOLDER = "Notes";
 
 export interface WriterOpts {
   app: App;
@@ -92,11 +111,61 @@ export class VaultWriter {
     return await app.vault.create(targetPath, markdown);
   }
 
+  /**
+   * Writes (or rewrites) the markdown file for a single handwritten
+   * note. Recognized markdown + summaries variant — no audio binary.
+   * `recognized` is null when the note's recognitionStatus !== "ready"
+   * yet (the server 404s `/recognized` in that case); we still write a
+   * stub so the user sees the file appear and watches it fill in on
+   * later passes.
+   */
+  async writeNote(
+    detail: NoteDetailResponse,
+    recognizedText: string | null,
+    summaries: NoteSummary[],
+  ): Promise<TFile> {
+    const { app, root } = this.opts;
+    const noteFolder = normalizePath(`${root}/${NOTES_SUBFOLDER}`);
+    if (!app.vault.getAbstractFileByPath(noteFolder)) {
+      await app.vault.createFolder(noteFolder);
+    }
+    const baseName = buildNoteBaseName(detail);
+    const targetPath = normalizePath(`${noteFolder}/${baseName}.md`);
+
+    const existing = this.findExistingNoteFile(detail.id);
+    if (existing && existing.path !== targetPath) {
+      await app.fileManager.renameFile(existing, targetPath);
+    }
+    const markdown = composeNoteMarkdown(detail, recognizedText, summaries);
+    const after = app.vault.getAbstractFileByPath(targetPath);
+    if (after instanceof TFile) {
+      await app.vault.modify(after, markdown);
+      return after;
+    }
+    return await app.vault.create(targetPath, markdown);
+  }
+
   /** Return the TFile whose frontmatter has `cordari_id === id`, if any. */
   private findExistingFile(id: string): TFile | null {
     const files = this.opts.app.vault.getMarkdownFiles();
     for (const f of files) {
       if (!f.path.startsWith(this.opts.root + "/")) continue;
+      const cache = this.opts.app.metadataCache.getFileCache(f);
+      const fm = cache?.frontmatter as Record<string, unknown> | undefined;
+      if (fm?.cordari_id === id) return f;
+    }
+    return null;
+  }
+
+  /**
+   * Scoped to the notes subfolder so a recording markdown with the
+   * (astronomically unlikely) same id doesn't get touched as a note.
+   * The sync layer also reads this folder for its localIndex of notes.
+   */
+  private findExistingNoteFile(id: string): TFile | null {
+    const notesPrefix = `${this.opts.root}/${NOTES_SUBFOLDER}/`;
+    for (const f of this.opts.app.vault.getMarkdownFiles()) {
+      if (!f.path.startsWith(notesPrefix)) continue;
       const cache = this.opts.app.metadataCache.getFileCache(f);
       const fm = cache?.frontmatter as Record<string, unknown> | undefined;
       if (fm?.cordari_id === id) return f;
@@ -171,6 +240,87 @@ export function buildBaseName(
   const safeFilename = sanitizeForFs(d.filename) || "recording";
   const shortId = d.id.slice(0, 8);
   return `${dateStamp}_${safeFilename}__${shortId}`;
+}
+
+/**
+ * Canonical filename stem for a note. Uses `ingestedAt` since notes
+ * don't have the recording-style `startTime` field; otherwise mirrors
+ * the recording naming convention so vault tooling can pattern-match
+ * either kind the same way.
+ */
+export function buildNoteBaseName(
+  d: Pick<NoteDetailResponse, "id" | "filename" | "ingestedAt">,
+): string {
+  const dateStamp = new Date(d.ingestedAt).toISOString().slice(0, 10);
+  const safeFilename = sanitizeForFs(d.filename) || "note";
+  const shortId = d.id.slice(0, 8);
+  return `${dateStamp}_${safeFilename}__${shortId}`;
+}
+
+/**
+ * Compose the markdown body for a single note. Mirrors the recording
+ * `composeMarkdown` shape (YAML → title → body → summaries → footer)
+ * minus the audio embed and transcript section. Exported so unit tests
+ * can pin the layout without spinning up an Obsidian Vault.
+ *
+ * `recognizedText` is null when the server hasn't finished recognition
+ * yet (the recognized endpoint 404s); we write a "_recognition pending_"
+ * stub so the file shows up in the vault and updates on the next pass
+ * once recognition flips to ready.
+ *
+ * `summaries` carries the summary metadata + full bodies (one
+ * round-trip per summary on the sync side). Empty list → "_summary
+ * pending_" stub, matching the recording-side wording.
+ */
+export function composeNoteMarkdown(
+  d: NoteDetailResponse,
+  recognizedText: string | null,
+  summaries: NoteSummary[],
+): string {
+  const yamlLines = [
+    "---",
+    `cordari_id: ${d.id}`,
+    `cordari_url: ${CORDARI_SERVER_URL}/notes/${d.id}`,
+    `cordari_writer_version: ${NOTE_WRITER_VERSION}`,
+    `source: ${d.source}`,
+    `filename: ${yamlEscape(d.filename)}`,
+    `ingested_at: ${new Date(d.ingestedAt).toISOString()}`,
+    // `updated_at` is the freshness anchor the sync layer reads to
+    // decide whether the note row on the server has changed since the
+    // last write — quoted as ISO so a YAML parser doesn't reinterpret
+    // it; the index parser handles both strings and Date instances.
+    `updated_at: ${new Date(d.updatedAt).toISOString()}`,
+    `recognition_status: ${d.recognitionStatus}`,
+  ];
+  if (d.pageCount !== null) yamlLines.push(`page_count: ${d.pageCount}`);
+  if (d.recognizedAt !== null) {
+    yamlLines.push(`recognized_at: ${new Date(d.recognizedAt).toISOString()}`);
+  }
+  yamlLines.push("---", "");
+  const yaml = yamlLines.join("\n");
+
+  const title = `# ${d.filename}`;
+
+  const recognizedSection =
+    recognizedText && recognizedText.trim()
+      ? recognizedText.trim()
+      : d.recognitionStatus === "failed"
+        ? "_recognition failed_"
+        : "_recognition pending_";
+
+  const summarySection =
+    summaries.length > 0
+      ? summaries
+          .map((s) => {
+            const label = s.tabName ?? s.title ?? "Summary";
+            return `## ${label}\n\n${(s.contentText ?? "").trim()}`;
+          })
+          .join("\n\n")
+      : "## Summary\n\n_summary pending_";
+
+  const footer = `[Open in Cordari](${CORDARI_SERVER_URL}/notes/${d.id})`;
+
+  return [yaml, title, "", recognizedSection, "", summarySection, "", footer, ""].join("\n");
 }
 
 /** Make a string safe for a filesystem path — mirrors the server's approach. */

@@ -1,8 +1,9 @@
 # Cordari for Obsidian
 
-Sync your [Cordari](https://app.cordari.ai) voice recordings into your
-Obsidian vault as markdown files — one page per recording, with the audio
-embedded inline, the Plaud-generated summary, and the full transcript.
+Sync your [Cordari](https://app.cordari.ai) voice recordings and
+handwritten notes into your Obsidian vault as markdown files — one page
+per recording (audio embedded inline, summary, full transcript) and one
+page per handwritten note (recognized markdown + summaries).
 
 ## What it does
 
@@ -13,9 +14,13 @@ Each sync pass:
   `state`).
 - Saves the recording's audio next to the markdown as `.ogg` so it plays in
   Reading Mode via `![[...ogg]]`.
-- Reconciles continuously — renames on Plaud's side propagate to the file,
-  late-arriving transcripts/summaries update the same file in place, and
-  anything you deleted from the vault gets rewritten on the next sync.
+- Creates `Cordari/Notes/{date}_{filename}__{shortId}.md` per handwritten
+  note (Boox today), with the recognized markdown, any AI summaries, and a
+  link back to the note in Cordari. No audio — handwriting only.
+- Reconciles continuously — renames on the Cordari side propagate to the
+  file, late-arriving transcripts/summaries/recognition update the same
+  file in place, and anything you deleted from the vault gets rewritten
+  on the next sync.
 
 The plugin only sends read requests; nothing in your vault is pushed back
 to Cordari.

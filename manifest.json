@@ -1,9 +1,9 @@
 {
   "id": "cordari-notes",
   "name": "Cordari",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "minAppVersion": "1.4.0",
-  "description": "Sync your Cordari voice-recording summaries, transcripts, and audio into your vault.",
+  "description": "Sync your Cordari voice recordings and handwritten notes into your vault.",
   "author": "Cordari",
   "authorUrl": "https://cordari.ai",
   "isDesktopOnly": true
