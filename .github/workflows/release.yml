@@ -1,0 +1,54 @@
+name: Release
+
+# Obsidian community plugins are released by pushing a bare-semver tag
+# (no `v` prefix — Obsidian's updater rejects `v`-prefixed tags). This
+# workflow builds the plugin and attaches the three loose assets Obsidian
+# expects (main.js, manifest.json, styles.css) to a GitHub Release named
+# after the tag.
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Verify tag matches manifest.json version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          MANIFEST_VERSION=$(node -p "require('./manifest.json').version")
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG" != "$MANIFEST_VERSION" ] || [ "$TAG" != "$PACKAGE_VERSION" ]; then
+            echo "::error::Tag ($TAG) does not match manifest.json ($MANIFEST_VERSION) or package.json ($PACKAGE_VERSION)"
+            exit 1
+          fi
+
+      - run: npm run typecheck
+
+      - run: npm run build
+
+      # Obsidian's updater fetches main.js from the release root, not dist/.
+      - name: Stage release assets
+        run: cp dist/main.js main.js
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            main.js manifest.json styles.css
