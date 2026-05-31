@@ -1,6 +1,10 @@
 import { requestUrl, type RequestUrlParam } from "obsidian";
 import {
   type DeviceCodeResponse,
+  type NoteDetailResponse,
+  type NoteRecognizedResponse,
+  type NoteSummary,
+  type NotesListResponse,
   type RecordingDetailResponse,
   type RecordingsListResponse,
   type TokenPollResponse,
@@ -111,6 +115,54 @@ export function createClient(token: string | null) {
       return jsonFetch<RecordingDetailResponse>({
         url: `${base}/api/recordings/${id}`,
         token,
+      });
+    },
+    // ---- Notes (handwritten / Boox) — /api/v1/notes/* ----
+    //
+    // The notes endpoints live under the versioned `/api/v1` prefix
+    // (the older recordings endpoints above are unversioned for
+    // backwards compatibility with prior plugin builds; the v1
+    // recordings surface mirrors them). Same auth model — Bearer
+    // cdr_ token.
+    listNotes(params: { limit?: number; offset?: number; search?: string } = {}): Promise<NotesListResponse> {
+      if (!token) throw new ApiError("not linked", 401);
+      const qs = new URLSearchParams();
+      if (params.limit) qs.set("limit", String(params.limit));
+      if (params.offset) qs.set("offset", String(params.offset));
+      if (params.search) qs.set("search", params.search);
+      const suffix = qs.toString();
+      return jsonFetch<NotesListResponse>({
+        url: `${base}/api/v1/notes${suffix ? `?${suffix}` : ""}`,
+        token,
+      });
+    },
+    noteDetail(id: string): Promise<NoteDetailResponse> {
+      if (!token) throw new ApiError("not linked", 401);
+      return jsonFetch<NoteDetailResponse>({
+        url: `${base}/api/v1/notes/${id}`,
+        token,
+      });
+    },
+    /** Returns null when recognition isn't ready yet (server 404s those). */
+    noteRecognized(id: string): Promise<NoteRecognizedResponse | null> {
+      if (!token) throw new ApiError("not linked", 401);
+      return jsonFetch<NoteRecognizedResponse>({
+        url: `${base}/api/v1/notes/${id}/recognized`,
+        token,
+      }).catch((err) => {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      });
+    },
+    /** One summary's full body. Returns null on 404 (race with deletion). */
+    noteSummary(noteId: string, assetId: string): Promise<NoteSummary | null> {
+      if (!token) throw new ApiError("not linked", 401);
+      return jsonFetch<NoteSummary>({
+        url: `${base}/api/v1/notes/${noteId}/summaries/${encodeURIComponent(assetId)}`,
+        token,
+      }).catch((err) => {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
       });
     },
     async downloadBinary(url: string): Promise<ArrayBuffer> {

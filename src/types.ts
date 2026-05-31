@@ -73,3 +73,70 @@ export interface TokenPollResponse {
   scope?: string;
   error?: "authorization_pending" | "expired_token" | "invalid_request" | "server_error";
 }
+
+// ---- Notes (handwritten, /api/v1/notes) ----
+//
+// Mirrored from cordari-cloud's `routes/v1/notes.ts` PublicNote /
+// PublicNoteSummaryMeta shapes. Notes come from the Boox handwriting
+// pipeline today (`source: "boox"`); `NoteSource` is left open so a
+// future second source doesn't force a type breakage at the plugin
+// boundary.
+
+export type NoteSource = "boox" | (string & {});
+export type NoteRecognitionStatus =
+  | "pending"
+  | "in_progress"
+  | "ready"
+  | "failed"
+  | (string & {});
+
+export interface NoteRow {
+  id: string;
+  filename: string;
+  sourcePath: string;
+  filesizeBytes: number;
+  contentType: string;
+  source: NoteSource;
+  recognitionStatus: NoteRecognitionStatus;
+  recognitionError: string | null;
+  /** epoch ms */
+  recognizedAt: number | null;
+  pageCount: number | null;
+  summaryCount: number;
+  /** epoch ms — sort key for incremental polling */
+  ingestedAt: number;
+  /** epoch ms */
+  updatedAt: number;
+}
+
+export interface NotesListResponse {
+  total: number;
+  items: NoteRow[];
+}
+
+export interface NoteSummaryMeta {
+  id: string;
+  source: "cordari" | "plaud" | (string & {});
+  title: string | null;
+  tabName: string | null;
+  /** epoch ms */
+  ingestedAt: number;
+}
+
+export interface NoteSummary extends NoteSummaryMeta {
+  contentText: string;
+}
+
+export interface NoteDetailResponse extends NoteRow {
+  summaries: NoteSummaryMeta[];
+}
+
+export interface NoteRecognizedResponse {
+  noteId: string;
+  contentText: string;
+  pageCount: number | null;
+  /** epoch ms */
+  recognizedAt: number | null;
+  /** epoch ms */
+  ingestedAt: number;
+}
