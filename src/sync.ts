@@ -1,6 +1,6 @@
 import { Notice, normalizePath, type App } from "obsidian";
 import { ApiError, type ApiClient } from "./api.js";
-import type { NoteRow, NoteSummary, RecordingRow } from "./types.js";
+import type { NoteRow, RecordingRow } from "./types.js";
 import {
   buildBaseName,
   NOTE_WRITER_VERSION,
@@ -58,10 +58,12 @@ function buildLocalIndex(app: App, root: string): Map<string, LocalEntry> {
  * Cordari API and share the same auth + folder root. Runs are not
  * reentrant; the plugin gates this behind an in-memory flag.
  *
- * A 401 from either lane bubbles up to onUnauthorized and aborts the
- * pass; other errors are isolated to their lane so a notes-side outage
- * (e.g. during the /api/v1/notes rollout window where the endpoint may
- * 404) doesn't take down recordings sync.
+ * Only the recordings lane's auth result drives the connection-level
+ * disconnect path: a 401 from listRecordings or recordingDetail
+ * bubbles up here and fires onUnauthorized. The notes lane (a
+ * secondary, optional integration) swallows its own 401/403/404 so a
+ * server-side misconfiguration on /api/boox-notes can't tear down the
+ * link to a working /api/recordings — that was the COR-352 bug.
  */
 export async function runSync(opts: SyncOpts): Promise<void> {
   try {
@@ -211,7 +213,7 @@ async function syncOne(
   return { wroteAudioBytes: audioBytes?.byteLength ?? 0, audioReused };
 }
 
-// ---- Notes sync (handwritten / Boox via /api/v1/notes) ----
+// ---- Notes sync (handwritten / Boox via /api/boox-notes) ----
 
 interface LocalNoteEntry {
   filename: string;
@@ -264,13 +266,16 @@ function buildNotesLocalIndex(app: App, root: string): Map<string, LocalNoteEntr
 /**
  * Same reconciliation shape as the recordings sync. Lists every note,
  * decides per-row whether a fetch+write is needed, then materializes
- * the markdown. Recognition + summary bodies are fetched per note when
- * recognized; for pending recognition we still write a stub so the
- * file is visible and gets filled in on the next pass.
+ * the markdown. The detail call returns recognition + summary bodies
+ * inline (one fetch per note); for pending recognition we still write
+ * a stub so the file is visible and gets filled in on the next pass.
  *
- * Rollout fallback: if `/api/v1/notes` returns 404 (server not yet
- * deployed with the notes router), log and return without taking down
- * the recordings sync that already ran.
+ * The notes lane is treated as optional infrastructure on top of
+ * recordings: a 401, 403, or 404 from /api/boox-notes is swallowed
+ * (warn-logged, no Notice spam) instead of propagating up to
+ * onUnauthorized. A misconfigured / unavailable notes endpoint must
+ * never tear down the authenticated link that recordings just
+ * confirmed works — see runSync's doc comment for the COR-352 context.
  */
 export async function runNotesSync(opts: SyncOpts): Promise<void> {
   const writer = new VaultWriter({
@@ -292,11 +297,18 @@ export async function runNotesSync(opts: SyncOpts): Promise<void> {
     try {
       page = await opts.client.listNotes({ limit: pageSize, offset });
     } catch (err) {
-      if (err instanceof ApiError && err.status === 404) {
-        // Endpoint not yet deployed on this Cordari instance — silent
-        // skip is preferable to a Notice every poll during the rollout
-        // window. Recordings already ran above.
-        console.debug("[Cordari] notes endpoint unavailable (404); skipping notes sync");
+      if (
+        err instanceof ApiError &&
+        (err.status === 404 || err.status === 401 || err.status === 403)
+      ) {
+        // Notes endpoint not reachable on this Cordari instance —
+        // 404 (router not deployed), 401 (token scope not admitted),
+        // 403 (notes permission denied). Skip silently; recordings
+        // already ran above and any auth issue with the *primary*
+        // /api/recordings surface would have surfaced there.
+        console.warn(
+          `[Cordari] notes endpoint unavailable (HTTP ${err.status}); skipping notes sync without disconnecting`,
+        );
         return;
       }
       throw err;
@@ -320,7 +332,9 @@ export async function runNotesSync(opts: SyncOpts): Promise<void> {
           reason,
         });
       } catch (err) {
-        if (err instanceof ApiError && err.status === 401) throw err;
+        // Per-row auth failures are also swallowed (don't re-throw 401)
+        // — see runSync's doc comment. A note-side 401 here would
+        // disconnect the user even though recordings is healthy.
         console.warn("[Cordari] syncOneNote failed; continuing", {
           id: row.id,
           err: err instanceof Error ? err.message : String(err),
@@ -375,33 +389,25 @@ async function syncOneNote(
   client: ApiClient,
   writer: VaultWriter,
 ): Promise<void> {
-  // Detail call gives us authoritative metadata + the summary id list
-  // (the list endpoint only returns counts). Same idempotency posture
-  // as recordings — we always write through writer.writeNote, which
-  // creates-or-updates by cordari_id.
-  const detail = await client.noteDetail(row.id);
+  // One fetch — /api/boox-notes/:id bundles the recognized markdown
+  // (per page) and full summary bodies inline. Same idempotency
+  // posture as recordings: writer.writeNote creates-or-updates by
+  // cordari_id.
+  const { note } = await client.noteDetail(row.id);
 
-  // Recognized markdown: skip the fetch when not ready (server 404s
-  // anyway; we save the round trip and the writer renders the
-  // "_recognition pending_" stub from the detail row).
-  const recognized =
-    detail.recognitionStatus === "ready"
-      ? await client.noteRecognized(detail.id)
+  // Assemble the recognized markdown from per-page chunks. Matches the
+  // server's getNoteMarkdown() helper exactly — non-empty pages joined
+  // by a blank line — so destinations and the vault see identical
+  // text. Null when recognition isn't ready or the recognizer hasn't
+  // emitted any pages yet; the writer falls back to its
+  // "_recognition pending_" stub in that case.
+  const recognizedText =
+    note.recognitionStatus === "ready"
+      ? note.recognizedPages
+          .map((p) => p.contentText)
+          .filter((t) => t.trim().length > 0)
+          .join("\n\n") || null
       : null;
 
-  // Summary bodies: one round-trip per summary. The detail only carries
-  // metadata; full markdown comes from
-  // /api/v1/notes/:id/summaries/:assetId. Concurrent fetches keep the
-  // wall-clock down on notes with multiple summaries.
-  const summaries: NoteSummary[] = [];
-  if (detail.summaries.length > 0) {
-    const fetched = await Promise.all(
-      detail.summaries.map((s) => client.noteSummary(detail.id, s.id)),
-    );
-    for (const s of fetched) {
-      if (s) summaries.push(s);
-    }
-  }
-
-  await writer.writeNote(detail, recognized?.contentText ?? null, summaries);
+  await writer.writeNote(note, recognizedText, note.summaries);
 }

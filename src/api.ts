@@ -2,8 +2,6 @@ import { requestUrl, type RequestUrlParam } from "obsidian";
 import {
   type DeviceCodeResponse,
   type NoteDetailResponse,
-  type NoteRecognizedResponse,
-  type NoteSummary,
   type NotesListResponse,
   type RecordingDetailResponse,
   type RecordingsListResponse,
@@ -117,13 +115,19 @@ export function createClient(token: string | null) {
         token,
       });
     },
-    // ---- Notes (handwritten / Boox) — /api/v1/notes/* ----
+    // ---- Notes (handwritten / Boox) — /api/boox-notes/* ----
     //
-    // The notes endpoints live under the versioned `/api/v1` prefix
-    // (the older recordings endpoints above are unversioned for
-    // backwards compatibility with prior plugin builds; the v1
-    // recordings surface mirrors them). Same auth model — Bearer
-    // cdr_ token.
+    // Uses the internal /api/boox-notes surface (same one the web app
+    // hits), which admits the obsidian-scoped device token via
+    // requireAuth — parallel to /api/recordings above. The /api/v1
+    // surface is a separate, Pro-gated public REST API for cdr_/cdrw_
+    // tokens only and rejects this token with 401; pointing notes at
+    // /api/v1 (the original COR-319 wiring) caused COR-352, where a
+    // 401 from the notes lane tore down the freshly-minted connection.
+    //
+    // The detail endpoint returns the recognized markdown (per page)
+    // and the full summary bodies inline, so the plugin only does ONE
+    // request per note instead of detail + recognized + N summaries.
     listNotes(params: { limit?: number; offset?: number; search?: string } = {}): Promise<NotesListResponse> {
       if (!token) throw new ApiError("not linked", 401);
       const qs = new URLSearchParams();
@@ -132,37 +136,15 @@ export function createClient(token: string | null) {
       if (params.search) qs.set("search", params.search);
       const suffix = qs.toString();
       return jsonFetch<NotesListResponse>({
-        url: `${base}/api/v1/notes${suffix ? `?${suffix}` : ""}`,
+        url: `${base}/api/boox-notes${suffix ? `?${suffix}` : ""}`,
         token,
       });
     },
     noteDetail(id: string): Promise<NoteDetailResponse> {
       if (!token) throw new ApiError("not linked", 401);
       return jsonFetch<NoteDetailResponse>({
-        url: `${base}/api/v1/notes/${id}`,
+        url: `${base}/api/boox-notes/${id}`,
         token,
-      });
-    },
-    /** Returns null when recognition isn't ready yet (server 404s those). */
-    noteRecognized(id: string): Promise<NoteRecognizedResponse | null> {
-      if (!token) throw new ApiError("not linked", 401);
-      return jsonFetch<NoteRecognizedResponse>({
-        url: `${base}/api/v1/notes/${id}/recognized`,
-        token,
-      }).catch((err) => {
-        if (err instanceof ApiError && err.status === 404) return null;
-        throw err;
-      });
-    },
-    /** One summary's full body. Returns null on 404 (race with deletion). */
-    noteSummary(noteId: string, assetId: string): Promise<NoteSummary | null> {
-      if (!token) throw new ApiError("not linked", 401);
-      return jsonFetch<NoteSummary>({
-        url: `${base}/api/v1/notes/${noteId}/summaries/${encodeURIComponent(assetId)}`,
-        token,
-      }).catch((err) => {
-        if (err instanceof ApiError && err.status === 404) return null;
-        throw err;
       });
     },
     async downloadBinary(url: string): Promise<ArrayBuffer> {
