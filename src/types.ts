@@ -74,15 +74,14 @@ export interface TokenPollResponse {
   error?: "authorization_pending" | "expired_token" | "invalid_request" | "server_error";
 }
 
-// ---- Notes (handwritten, /api/v1/notes) ----
+// ---- Notes (handwritten, /api/boox-notes) ----
 //
-// Mirrored from cordari-cloud's `routes/v1/notes.ts` PublicNote /
-// PublicNoteSummaryMeta shapes. Notes come from the Boox handwriting
-// pipeline today (`source: "boox"`); `NoteSource` is left open so a
-// future second source doesn't force a type breakage at the plugin
-// boundary.
+// Mirrored from cordari-cloud's `routes/boox-notes.ts` + the
+// `BooxNote*` types in `shared/src/note.ts`. The plugin talks to the
+// internal /api/boox-notes surface (not /api/v1/notes — that one is
+// Pro-gated to cdr_/cdrw_ public-API tokens and rejects the
+// obsidian-scoped device token with 401).
 
-export type NoteSource = "boox" | (string & {});
 export type NoteRecognitionStatus =
   | "pending"
   | "in_progress"
@@ -90,53 +89,64 @@ export type NoteRecognitionStatus =
   | "failed"
   | (string & {});
 
+/** One row in the GET /api/boox-notes list response. */
 export interface NoteRow {
   id: string;
-  filename: string;
+  /** WebDAV path the device sent, e.g. "/Notebooks/Daily.pdf". */
   sourcePath: string;
+  /** Display filename derived from sourcePath. */
+  filename: string;
   filesizeBytes: number;
   contentType: string;
-  source: NoteSource;
+  /** epoch ms — sort key for incremental polling. */
+  ingestedAt: number;
+  /** epoch ms — bumped on every re-PUT of the same path. */
+  updatedAt: number;
+  pageCount: number | null;
   recognitionStatus: NoteRecognitionStatus;
   recognitionError: string | null;
   /** epoch ms */
   recognizedAt: number | null;
-  pageCount: number | null;
-  summaryCount: number;
-  /** epoch ms — sort key for incremental polling */
-  ingestedAt: number;
-  /** epoch ms */
-  updatedAt: number;
+  /** Number of Cordari summary assets persisted for this note. */
+  summaryAssetCount: number;
 }
 
 export interface NotesListResponse {
   total: number;
+  totalBytes: number;
   items: NoteRow[];
 }
 
-export interface NoteSummaryMeta {
-  id: string;
-  source: "cordari" | "plaud" | (string & {});
-  title: string | null;
-  tabName: string | null;
-  /** epoch ms */
-  ingestedAt: number;
-}
-
-export interface NoteSummary extends NoteSummaryMeta {
+/** One page of recognized markdown from the bundled detail. */
+export interface RecognizedPage {
+  pageNumber: number;
   contentText: string;
 }
 
-export interface NoteDetailResponse extends NoteRow {
-  summaries: NoteSummaryMeta[];
+/**
+ * Inner detail row returned under `note` by GET /api/boox-notes/:id.
+ * Carries everything the writer needs (frontmatter fields +
+ * recognizedPages + summaries with contentText) in a single fetch.
+ * The full server response also includes `tags`, `actionItems`, and
+ * `calendarEvents`; the plugin doesn't use those today but they
+ * arrive on the wire and are passed through as opaque arrays.
+ */
+export interface NoteDetail extends NoteRow {
+  recognizedPages: RecognizedPage[];
+  summaries: Summary[];
+  tags: unknown[];
+  actionItems: unknown[];
+  calendarEvents: unknown[];
 }
 
-export interface NoteRecognizedResponse {
-  noteId: string;
-  contentText: string;
-  pageCount: number | null;
-  /** epoch ms */
-  recognizedAt: number | null;
-  /** epoch ms */
-  ingestedAt: number;
+/**
+ * Top-level wrapper for GET /api/boox-notes/:id. `pdfUrl` and
+ * `routedTo` are SPA-facing fields the plugin ignores, but kept on the
+ * type so an upstream wire-format addition doesn't surprise the
+ * compiler.
+ */
+export interface NoteDetailResponse {
+  note: NoteDetail;
+  pdfUrl: string | null;
+  routedTo: unknown[];
 }

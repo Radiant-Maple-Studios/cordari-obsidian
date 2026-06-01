@@ -1,6 +1,6 @@
 import { normalizePath, TFile, type App } from "obsidian";
 import { CORDARI_SERVER_URL } from "./api.js";
-import type { NoteDetailResponse, NoteSummary, RecordingDetail } from "./types.js";
+import type { NoteDetail, RecordingDetail, Summary } from "./types.js";
 
 // Writes the per-recording markdown + audio into the vault and keeps them
 // up to date on re-sync. Lookup by `cordari_id` in YAML frontmatter so
@@ -120,9 +120,9 @@ export class VaultWriter {
    * later passes.
    */
   async writeNote(
-    detail: NoteDetailResponse,
+    detail: NoteDetail,
     recognizedText: string | null,
-    summaries: NoteSummary[],
+    summaries: Summary[],
   ): Promise<TFile> {
     const { app, root } = this.opts;
     const noteFolder = normalizePath(`${root}/${NOTES_SUBFOLDER}`);
@@ -249,7 +249,7 @@ export function buildBaseName(
  * either kind the same way.
  */
 export function buildNoteBaseName(
-  d: Pick<NoteDetailResponse, "id" | "filename" | "ingestedAt">,
+  d: Pick<NoteDetail, "id" | "filename" | "ingestedAt">,
 ): string {
   const dateStamp = new Date(d.ingestedAt).toISOString().slice(0, 10);
   const safeFilename = sanitizeForFs(d.filename) || "note";
@@ -264,25 +264,30 @@ export function buildNoteBaseName(
  * can pin the layout without spinning up an Obsidian Vault.
  *
  * `recognizedText` is null when the server hasn't finished recognition
- * yet (the recognized endpoint 404s); we write a "_recognition pending_"
- * stub so the file shows up in the vault and updates on the next pass
- * once recognition flips to ready.
+ * yet (recognizedPages is empty until status flips to ready); we write
+ * a "_recognition pending_" stub so the file shows up in the vault and
+ * updates on the next pass once recognition lands.
  *
- * `summaries` carries the summary metadata + full bodies (one
- * round-trip per summary on the sync side). Empty list → "_summary
- * pending_" stub, matching the recording-side wording.
+ * `summaries` carries the summary metadata + full bodies inline from
+ * the detail response. Empty list → "_summary pending_" stub, matching
+ * the recording-side wording.
  */
 export function composeNoteMarkdown(
-  d: NoteDetailResponse,
+  d: NoteDetail,
   recognizedText: string | null,
-  summaries: NoteSummary[],
+  summaries: Summary[],
 ): string {
   const yamlLines = [
     "---",
     `cordari_id: ${d.id}`,
     `cordari_url: ${CORDARI_SERVER_URL}/notes/${d.id}`,
     `cordari_writer_version: ${NOTE_WRITER_VERSION}`,
-    `source: ${d.source}`,
+    // Source is always "boox" today — the handwriting recognition
+    // pipeline is the only producer of notes in this surface. Pinned
+    // as a constant so the YAML frontmatter shape (and any Dataview
+    // query users built on it) stays stable through future source
+    // additions; the field will be unpinned when a second source ships.
+    `source: boox`,
     `filename: ${yamlEscape(d.filename)}`,
     `ingested_at: ${new Date(d.ingestedAt).toISOString()}`,
     // `updated_at` is the freshness anchor the sync layer reads to
