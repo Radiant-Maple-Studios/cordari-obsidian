@@ -5,6 +5,8 @@ import {
   buildBaseName,
   NOTE_WRITER_VERSION,
   NOTES_SUBFOLDER,
+  readFrontmatterId,
+  readFrontmatterWriterVersion,
   VaultWriter,
   WRITER_VERSION,
 } from "./writer.js";
@@ -23,7 +25,7 @@ interface LocalEntry {
 }
 
 /**
- * Scan the Cordari folder once per sync and return a cordari_id → local
+ * Scan the RoveNotes folder once per sync and return a rovenotes_id → local
  * state map from YAML frontmatter. Used to:
  *   - detect Plaud-side renames on complete recordings (re-fetch to
  *     update filename in frontmatter and rename the TFile),
@@ -40,13 +42,16 @@ function buildLocalIndex(app: App, root: string): Map<string, LocalEntry> {
     const fm = app.metadataCache.getFileCache(f)?.frontmatter as
       | Record<string, unknown>
       | undefined;
-    const id = typeof fm?.cordari_id === "string" ? fm.cordari_id : null;
+    const id = readFrontmatterId(fm);
     const filename = typeof fm?.filename === "string" ? fm.filename : null;
     // Missing / non-numeric version means the file was written by a
-    // pre-versioning plugin build (or a pre-rebrand build); treat as
-    // v0 so reasonToSync triggers a rewrite on the next pass.
-    const rawVersion = fm?.cordari_writer_version;
-    const writerVersion = typeof rawVersion === "number" ? rawVersion : 0;
+    // pre-versioning plugin build; treat as v0 so reasonToSync triggers
+    // a rewrite on the next pass. A file written by the pre-rebrand
+    // cordari-notes plugin reports its `cordari_writer_version` (e.g. 3)
+    // via the helper — `local < WRITER_VERSION (= 4)` still trips the
+    // writer-version-drift branch, which rewrites the file with the new
+    // `rovenotes_*` keys.
+    const writerVersion = readFrontmatterWriterVersion(fm);
     if (id && filename) cache.set(id, { filename, mdPath: f.path, writerVersion });
   }
   return cache;
@@ -55,7 +60,7 @@ function buildLocalIndex(app: App, root: string): Map<string, LocalEntry> {
 /**
  * Top-level sync entry point. Reconciles recordings and handwritten
  * notes in sequence — both are read-only pull integrations against the
- * Cordari API and share the same auth + folder root. Runs are not
+ * RoveNotes API and share the same auth + folder root. Runs are not
  * reentrant; the plugin gates this behind an in-memory flag.
  *
  * Only the recordings lane's auth result drives the connection-level
@@ -74,8 +79,8 @@ export async function runSync(opts: SyncOpts): Promise<void> {
       opts.onUnauthorized();
       return;
     }
-    console.error("[Cordari] sync failed", err);
-    new Notice(`Cordari sync failed: ${err instanceof Error ? err.message : String(err)}`);
+    console.error("[RoveNotes] sync failed", err);
+    new Notice(`RoveNotes sync failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -95,7 +100,7 @@ export async function runRecordingsSync(opts: SyncOpts): Promise<void> {
   });
 
   const localIndex = buildLocalIndex(opts.app, opts.root);
-  console.debug("[Cordari] recordings sync start", { localKnown: localIndex.size });
+  console.debug("[RoveNotes] recordings sync start", { localKnown: localIndex.size });
 
   let offset = 0;
   let scanned = 0;
@@ -119,7 +124,7 @@ export async function runRecordingsSync(opts: SyncOpts): Promise<void> {
         const r = await syncOne(row, opts.client, writer, opts.root, opts.app);
         synced++;
         if (r.audioReused) audioReused++;
-        console.debug("[Cordari] synced recording", {
+        console.debug("[RoveNotes] synced recording", {
           id: row.id,
           filename: row.filename,
           status: row.status,
@@ -129,7 +134,7 @@ export async function runRecordingsSync(opts: SyncOpts): Promise<void> {
         });
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) throw err;
-        console.warn("[Cordari] syncOne (recording) failed; continuing", {
+        console.warn("[RoveNotes] syncOne (recording) failed; continuing", {
           id: row.id,
           err: err instanceof Error ? err.message : String(err),
         });
@@ -140,7 +145,7 @@ export async function runRecordingsSync(opts: SyncOpts): Promise<void> {
     offset += pageSize;
   }
 
-  console.debug("[Cordari] recordings sync done", { scanned, synced, skipped, audioReused });
+  console.debug("[RoveNotes] recordings sync done", { scanned, synced, skipped, audioReused });
 }
 
 /**
@@ -148,7 +153,7 @@ export async function runRecordingsSync(opts: SyncOpts): Promise<void> {
  * if the local state is already correct. Checks in this order:
  *   1. Not complete on the server — pending transcript/summary may still
  *      arrive; re-fetch so the file stays current.
- *   2. No local .md with this cordari_id — either never synced or the
+ *   2. No local .md with this rovenotes_id — either never synced or the
  *      user/sync error deleted it; re-push.
  *   3. Local md exists but at the wrong path for the current filename —
  *      Plaud (or the user) renamed the recording.
@@ -203,7 +208,7 @@ async function syncOne(
     try {
       audioBytes = await client.downloadBinary(detail.audioUrl);
     } catch (err) {
-      console.warn("[Cordari] audio download failed; continuing without it", err);
+      console.warn("[RoveNotes] audio download failed; continuing without it", err);
     }
   } else if (r.audioDownloadedAt && audioExists) {
     audioReused = true;
@@ -230,7 +235,7 @@ interface LocalNoteEntry {
 }
 
 /**
- * Scan the notes subfolder once per pass and return a cordari_id →
+ * Scan the notes subfolder once per pass and return a rovenotes_id →
  * local entry map from YAML frontmatter. Notes live under
  * `<root>/<NOTES_SUBFOLDER>/` so this is scoped to that prefix; a
  * recording with the same id would not be considered a note.
@@ -243,10 +248,9 @@ function buildNotesLocalIndex(app: App, root: string): Map<string, LocalNoteEntr
     const fm = app.metadataCache.getFileCache(f)?.frontmatter as
       | Record<string, unknown>
       | undefined;
-    const id = typeof fm?.cordari_id === "string" ? fm.cordari_id : null;
+    const id = readFrontmatterId(fm);
     const filename = typeof fm?.filename === "string" ? fm.filename : null;
-    const rawVersion = fm?.cordari_writer_version;
-    const writerVersion = typeof rawVersion === "number" ? rawVersion : 0;
+    const writerVersion = readFrontmatterWriterVersion(fm);
     const rawUpdated = fm?.updated_at;
     // YAML may carry the timestamp as a Date (when Obsidian parses ISO
     // strings) or as a plain string we wrote ourselves; accept both.
@@ -284,7 +288,7 @@ export async function runNotesSync(opts: SyncOpts): Promise<void> {
   });
 
   const localIndex = buildNotesLocalIndex(opts.app, opts.root);
-  console.debug("[Cordari] notes sync start", { localKnown: localIndex.size });
+  console.debug("[RoveNotes] notes sync start", { localKnown: localIndex.size });
 
   let offset = 0;
   let scanned = 0;
@@ -301,13 +305,13 @@ export async function runNotesSync(opts: SyncOpts): Promise<void> {
         err instanceof ApiError &&
         (err.status === 404 || err.status === 401 || err.status === 403)
       ) {
-        // Notes endpoint not reachable on this Cordari instance —
+        // Notes endpoint not reachable on this RoveNotes instance —
         // 404 (router not deployed), 401 (token scope not admitted),
         // 403 (notes permission denied). Skip silently; recordings
         // already ran above and any auth issue with the *primary*
         // /api/recordings surface would have surfaced there.
         console.warn(
-          `[Cordari] notes endpoint unavailable (HTTP ${err.status}); skipping notes sync without disconnecting`,
+          `[RoveNotes] notes endpoint unavailable (HTTP ${err.status}); skipping notes sync without disconnecting`,
         );
         return;
       }
@@ -325,7 +329,7 @@ export async function runNotesSync(opts: SyncOpts): Promise<void> {
       try {
         await syncOneNote(row, opts.client, writer);
         synced++;
-        console.debug("[Cordari] synced note", {
+        console.debug("[RoveNotes] synced note", {
           id: row.id,
           filename: row.filename,
           recognitionStatus: row.recognitionStatus,
@@ -335,7 +339,7 @@ export async function runNotesSync(opts: SyncOpts): Promise<void> {
         // Per-row auth failures are also swallowed (don't re-throw 401)
         // — see runSync's doc comment. A note-side 401 here would
         // disconnect the user even though recordings is healthy.
-        console.warn("[Cordari] syncOneNote failed; continuing", {
+        console.warn("[RoveNotes] syncOneNote failed; continuing", {
           id: row.id,
           err: err instanceof Error ? err.message : String(err),
         });
@@ -346,7 +350,7 @@ export async function runNotesSync(opts: SyncOpts): Promise<void> {
     offset += pageSize;
   }
 
-  console.debug("[Cordari] notes sync done", { scanned, synced, skipped });
+  console.debug("[RoveNotes] notes sync done", { scanned, synced, skipped });
 }
 
 /**
@@ -392,7 +396,7 @@ async function syncOneNote(
   // One fetch — /api/boox-notes/:id bundles the recognized markdown
   // (per page) and full summary bodies inline. Same idempotency
   // posture as recordings: writer.writeNote creates-or-updates by
-  // cordari_id.
+  // rovenotes_id.
   const { note } = await client.noteDetail(row.id);
 
   // Assemble the recognized markdown from per-page chunks. Matches the

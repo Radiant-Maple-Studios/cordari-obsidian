@@ -1,19 +1,19 @@
 import { Notice, Plugin } from "obsidian";
 import { createClient } from "./api.js";
-import { CordariSettingTab, DEFAULT_SETTINGS, type CordariSettings } from "./settings.js";
+import { RoveNotesSettingTab, DEFAULT_SETTINGS, type RoveNotesSettings } from "./settings.js";
 import { runSync } from "./sync.js";
 
-export default class CordariPlugin extends Plugin {
-  settings: CordariSettings = DEFAULT_SETTINGS;
+export default class RoveNotesPlugin extends Plugin {
+  settings: RoveNotesSettings = DEFAULT_SETTINGS;
   private syncing = false;
   private autoSyncHandle: number | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
 
-    this.addSettingTab(new CordariSettingTab(this.app, this));
+    this.addSettingTab(new RoveNotesSettingTab(this.app, this));
 
-    this.addRibbonIcon("refresh-cw", "Cordari: sync recordings", () => {
+    this.addRibbonIcon("refresh-cw", "RoveNotes: sync recordings", () => {
       void this.syncNow();
     });
 
@@ -70,11 +70,11 @@ export default class CordariPlugin extends Plugin {
    */
   async syncNow(): Promise<void> {
     if (!this.settings.token) {
-      new Notice("Cordari: not connected. Open the plugin settings to link.");
+      new Notice("RoveNotes: not connected. Open the plugin settings to link.");
       return;
     }
     if (this.syncing) {
-      new Notice("Cordari: sync already in progress.");
+      new Notice("RoveNotes: sync already in progress.");
       return;
     }
     this.syncing = true;
@@ -85,7 +85,7 @@ export default class CordariPlugin extends Plugin {
         client,
         root: this.settings.root,
         onUnauthorized: () => {
-          new Notice("Cordari: connection expired. Open the plugin settings to re-link.");
+          new Notice("RoveNotes: connection expired. Open the plugin settings to re-link.");
           this.settings.token = null;
           this.settings.connectedName = null;
           void this.saveSettings();

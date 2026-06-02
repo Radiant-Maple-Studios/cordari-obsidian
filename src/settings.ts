@@ -1,8 +1,8 @@
 import { App, Modal, Notice, PluginSettingTab, Setting } from "obsidian";
-import type CordariPlugin from "./main.js";
+import type RoveNotesPlugin from "./main.js";
 import { createClient } from "./api.js";
 
-export interface CordariSettings {
+export interface RoveNotesSettings {
   token: string | null;
   root: string;
   pollMinutes: number;
@@ -10,16 +10,16 @@ export interface CordariSettings {
   connectedName: string | null;
 }
 
-export const DEFAULT_SETTINGS: CordariSettings = {
+export const DEFAULT_SETTINGS: RoveNotesSettings = {
   token: null,
-  root: "Cordari",
+  root: "RoveNotes",
   pollMinutes: 5,
   lastSyncAt: 0,
   connectedName: null,
 };
 
-export class CordariSettingTab extends PluginSettingTab {
-  constructor(app: App, private readonly plugin: CordariPlugin) {
+export class RoveNotesSettingTab extends PluginSettingTab {
+  constructor(app: App, private readonly plugin: RoveNotesPlugin) {
     super(app, plugin);
   }
 
@@ -34,10 +34,10 @@ export class CordariSettingTab extends PluginSettingTab {
       .setDesc("Recordings will be stored under this folder in your vault.")
       .addText((text) =>
         text
-          .setPlaceholder("Cordari")
+          .setPlaceholder("RoveNotes")
           .setValue(this.plugin.settings.root)
           .onChange(async (value) => {
-            this.plugin.settings.root = value.trim() || "Cordari";
+            this.plugin.settings.root = value.trim() || "RoveNotes";
             await this.plugin.saveSettings();
           }),
       );
@@ -65,7 +65,7 @@ export class CordariSettingTab extends PluginSettingTab {
       )
       .addButton((btn) =>
         btn
-          .setButtonText(connected ? "Re-link" : "Connect to Cordari")
+          .setButtonText(connected ? "Re-link" : "Connect to RoveNotes")
           .setCta()
           .onClick(() => new DeviceLinkModal(this.app, this.plugin, () => this.display()).open()),
       );
@@ -73,7 +73,7 @@ export class CordariSettingTab extends PluginSettingTab {
     if (connected) {
       new Setting(containerEl)
         .setName("Disconnect")
-        .setDesc("Clears the token locally. Revoke at app.cordari.ai to fully invalidate.")
+        .setDesc("Clears the token locally. Revoke at app.rovenotes.com to fully invalidate.")
         .addButton((btn) =>
           btn
             .setButtonText("Disconnect")
@@ -82,7 +82,7 @@ export class CordariSettingTab extends PluginSettingTab {
               this.plugin.settings.token = null;
               this.plugin.settings.connectedName = null;
               await this.plugin.saveSettings();
-              new Notice("Cordari: disconnected.");
+              new Notice("RoveNotes: disconnected.");
               this.display();
             }),
         );
@@ -113,7 +113,7 @@ class DeviceLinkModal extends Modal {
 
   constructor(
     app: App,
-    private readonly plugin: CordariPlugin,
+    private readonly plugin: RoveNotesPlugin,
     private readonly onDone: () => void,
   ) {
     super(app);
@@ -159,20 +159,20 @@ class DeviceLinkModal extends Modal {
     });
     this.contentEl.createEl("p", {
       text: this.userCode,
-      cls: "cordari-device-code",
+      cls: "rovenotes-device-code",
     });
 
     const link = this.contentEl.createEl("a", {
       text: "Open authorization page",
       href: this.verificationUrl,
-      cls: "cordari-device-link",
+      cls: "rovenotes-device-link",
     });
     link.setAttr("target", "_blank");
     link.setAttr("rel", "noopener noreferrer");
 
     this.contentEl.createEl("p", {
       text: "Waiting for approval…",
-      cls: "cordari-device-pending",
+      cls: "rovenotes-device-pending",
     });
   }
 
@@ -185,7 +185,7 @@ class DeviceLinkModal extends Modal {
         this.plugin.settings.connectedName = "Obsidian";
         this.plugin.settings.lastSyncAt = 0;
         await this.plugin.saveSettings();
-        new Notice("Cordari: connected.");
+        new Notice("RoveNotes: connected.");
         if (this.pollHandle !== null) {
           window.clearInterval(this.pollHandle);
           this.pollHandle = null;
@@ -204,7 +204,7 @@ class DeviceLinkModal extends Modal {
       }
       // authorization_pending / server_error: keep waiting.
     } catch (err) {
-      console.warn("[Cordari] device poll error", err);
+      console.warn("[RoveNotes] device poll error", err);
     }
   }
 

@@ -1,4 +1,4 @@
-// Shapes mirrored from the Cordari server. The plugin bundle is a single
+// Shapes mirrored from the RoveNotes server. The plugin bundle is a single
 // CommonJS file sent to users, so we can't depend on the server's shared
 // package at build time — copy the subset we use.
 
@@ -107,7 +107,7 @@ export interface NoteRow {
   recognitionError: string | null;
   /** epoch ms */
   recognizedAt: number | null;
-  /** Number of Cordari summary assets persisted for this note. */
+  /** Number of RoveNotes summary assets persisted for this note. */
   summaryAssetCount: number;
 }
 
