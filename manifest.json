@@ -1,7 +1,7 @@
 {
   "id": "rovenotes-notes",
   "name": "RoveNotes",
-  "version": "0.2.0",
+  "version": "0.1.6",
   "minAppVersion": "1.4.0",
   "description": "Sync your RoveNotes voice recordings and handwritten notes into your vault.",
   "author": "RoveNotes",
