@@ -1,6 +1,6 @@
 {
   "name": "rovenotes-obsidian",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "RoveNotes Obsidian plugin",
   "main": "dist/main.js",
   "scripts": {
