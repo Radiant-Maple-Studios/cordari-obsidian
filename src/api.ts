@@ -11,7 +11,7 @@ import {
 /**
  * Thin wrapper around Obsidian's `requestUrl`. Using requestUrl instead of
  * the browser `fetch` is important: it runs through Electron's main
- * process so our CORS restrictions on the Cordari API don't apply. A
+ * process so our CORS restrictions on the RoveNotes API don't apply. A
  * plain fetch from the renderer would carry an `Origin: app://obsidian.md`
  * header that the server's CORS allowlist rejects.
  *
@@ -68,10 +68,10 @@ async function jsonFetch<T>(call: JsonCall): Promise<T> {
   return res.json as T;
 }
 
-export const CORDARI_SERVER_URL = "https://app.cordari.ai";
+export const ROVENOTES_SERVER_URL = "https://app.rovenotes.com";
 
 export function createClient(token: string | null) {
-  const base = CORDARI_SERVER_URL;
+  const base = ROVENOTES_SERVER_URL;
   return {
     startDeviceCode(clientName: string): Promise<DeviceCodeResponse> {
       return jsonFetch<DeviceCodeResponse>({

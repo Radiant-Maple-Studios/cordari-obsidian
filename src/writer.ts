@@ -1,15 +1,17 @@
 import { normalizePath, TFile, type App } from "obsidian";
-import { CORDARI_SERVER_URL } from "./api.js";
+import { ROVENOTES_SERVER_URL } from "./api.js";
 import type { NoteDetail, RecordingDetail, Summary } from "./types.js";
 
 // Writes the per-recording markdown + audio into the vault and keeps them
-// up to date on re-sync. Lookup by `cordari_id` in YAML frontmatter so
+// up to date on re-sync. Lookup by `rovenotes_id` in YAML frontmatter so
 // renames (either side) never create duplicates — we rewrite the existing
-// file in place, same cordari_id → same TFile.
+// file in place, same rovenotes_id → same TFile. The lookup also accepts
+// the legacy `cordari_id` key so vaults previously synced by the
+// cordari-notes plugin migrate on the next pass without orphaning files.
 
 /**
  * Bump this any time composeMarkdown's layout or wording changes. Files
- * whose frontmatter `cordari_writer_version` is below this value get
+ * whose frontmatter `rovenotes_writer_version` is below this value get
  * re-synced so stale content (old stubs, dropped fields, reshaped
  * sections) doesn't linger in the vault forever.
  *
@@ -19,11 +21,17 @@ import type { NoteDetail, RecordingDetail, Summary } from "./types.js";
  *        replaced "_(no summary available)_".
  *   v3 — rebrand Applaud → Cordari. Frontmatter keys switched from
  *        `applaud_id` / `applaud_url` / `applaud_writer_version` to
- *        `cordari_*`. Notes written by pre-v3 plugin builds look
- *        "local-missing" to the sync layer (new keys absent) and get
- *        fully rewritten on the next pass.
+ *        `cordari_*`. Notes written by pre-v3 plugin builds looked
+ *        "local-missing" to the sync layer and got fully rewritten.
+ *   v4 — rebrand Cordari → RoveNotes. Frontmatter keys switched from
+ *        `cordari_*` to `rovenotes_*`. Reads in this writer + the sync
+ *        layer's local index accept either set, so existing files are
+ *        rediscovered by id and modified in place on the next pass
+ *        rather than orphaned beside fresh `rovenotes_*` duplicates.
+ *        Body content below the YAML is still overwritten (same trade
+ *        as the v3 migration); user-edited notes lose those edits.
  */
-export const WRITER_VERSION = 3;
+export const WRITER_VERSION = 4;
 
 /**
  * Note-side analog of WRITER_VERSION. Notes are a separate file shape
@@ -34,8 +42,41 @@ export const WRITER_VERSION = 3;
  * History:
  *   v1 — initial notes support (COR-319 PR 8b): YAML + recognized text
  *        + summary sections + "Open in Cordari" footer.
+ *   v2 — rebrand Cordari → RoveNotes. Same key swap + same legacy
+ *        `cordari_*` fallback on reads as the recording-side v4; the
+ *        footer also flips to "Open in RoveNotes".
  */
-export const NOTE_WRITER_VERSION = 1;
+export const NOTE_WRITER_VERSION = 2;
+
+/**
+ * Read the recording/note id out of a markdown file's YAML frontmatter.
+ * Prefers the current `rovenotes_id` key but falls back to the legacy
+ * `cordari_id` so vaults synced by the cordari-notes plugin keep getting
+ * matched to their server-side id during the migration window. New
+ * writes only emit `rovenotes_id`, so each rewritten file drops the
+ * legacy key on its next pass.
+ */
+export function readFrontmatterId(
+  fm: Record<string, unknown> | undefined,
+): string | null {
+  const id = fm?.rovenotes_id ?? fm?.cordari_id;
+  return typeof id === "string" ? id : null;
+}
+
+/**
+ * Read the writer-version int out of a markdown file's YAML frontmatter,
+ * accepting either the new or legacy key. A note that only carries the
+ * legacy `cordari_writer_version` reports its own value (e.g. 3) — the
+ * sync layer then sees `local < WRITER_VERSION (= 4)` and re-syncs the
+ * file, which is what writes the new `rovenotes_*` keys. Missing / non-
+ * numeric → 0 so pre-versioning builds also trigger a rewrite.
+ */
+export function readFrontmatterWriterVersion(
+  fm: Record<string, unknown> | undefined,
+): number {
+  const v = fm?.rovenotes_writer_version ?? fm?.cordari_writer_version;
+  return typeof v === "number" ? v : 0;
+}
 
 /**
  * Notes live in this subfolder under the configured root so they don't
@@ -145,14 +186,18 @@ export class VaultWriter {
     return await app.vault.create(targetPath, markdown);
   }
 
-  /** Return the TFile whose frontmatter has `cordari_id === id`, if any. */
+  /**
+   * Return the TFile whose frontmatter id matches `id`. Accepts the
+   * legacy `cordari_id` key (via `readFrontmatterId`) so pre-rebrand
+   * files are rediscovered and rewritten in place on the next sync.
+   */
   private findExistingFile(id: string): TFile | null {
     const files = this.opts.app.vault.getMarkdownFiles();
     for (const f of files) {
       if (!f.path.startsWith(this.opts.root + "/")) continue;
       const cache = this.opts.app.metadataCache.getFileCache(f);
       const fm = cache?.frontmatter as Record<string, unknown> | undefined;
-      if (fm?.cordari_id === id) return f;
+      if (readFrontmatterId(fm) === id) return f;
     }
     return null;
   }
@@ -161,6 +206,7 @@ export class VaultWriter {
    * Scoped to the notes subfolder so a recording markdown with the
    * (astronomically unlikely) same id doesn't get touched as a note.
    * The sync layer also reads this folder for its localIndex of notes.
+   * Same legacy-key fallback as findExistingFile.
    */
   private findExistingNoteFile(id: string): TFile | null {
     const notesPrefix = `${this.opts.root}/${NOTES_SUBFOLDER}/`;
@@ -168,7 +214,7 @@ export class VaultWriter {
       if (!f.path.startsWith(notesPrefix)) continue;
       const cache = this.opts.app.metadataCache.getFileCache(f);
       const fm = cache?.frontmatter as Record<string, unknown> | undefined;
-      if (fm?.cordari_id === id) return f;
+      if (readFrontmatterId(fm) === id) return f;
     }
     return null;
   }
@@ -193,9 +239,9 @@ export class VaultWriter {
     const state = d.status;
     const yaml = [
       "---",
-      `cordari_id: ${d.id}`,
-      `cordari_url: ${CORDARI_SERVER_URL}/recordings/${d.id}`,
-      `cordari_writer_version: ${WRITER_VERSION}`,
+      `rovenotes_id: ${d.id}`,
+      `rovenotes_url: ${ROVENOTES_SERVER_URL}/recordings/${d.id}`,
+      `rovenotes_writer_version: ${WRITER_VERSION}`,
       `date: ${new Date(d.startTime).toISOString()}`,
       `duration_ms: ${d.durationMs}`,
       `filename: ${yamlEscape(d.filename)}`,
@@ -279,9 +325,9 @@ export function composeNoteMarkdown(
 ): string {
   const yamlLines = [
     "---",
-    `cordari_id: ${d.id}`,
-    `cordari_url: ${CORDARI_SERVER_URL}/notes/${d.id}`,
-    `cordari_writer_version: ${NOTE_WRITER_VERSION}`,
+    `rovenotes_id: ${d.id}`,
+    `rovenotes_url: ${ROVENOTES_SERVER_URL}/notes/${d.id}`,
+    `rovenotes_writer_version: ${NOTE_WRITER_VERSION}`,
     // Source is always "boox" today — the handwriting recognition
     // pipeline is the only producer of notes in this surface. Pinned
     // as a constant so the YAML frontmatter shape (and any Dataview
@@ -323,7 +369,7 @@ export function composeNoteMarkdown(
           .join("\n\n")
       : "## Summary\n\n_summary pending_";
 
-  const footer = `[Open in Cordari](${CORDARI_SERVER_URL}/notes/${d.id})`;
+  const footer = `[Open in RoveNotes](${ROVENOTES_SERVER_URL}/notes/${d.id})`;
 
   return [yaml, title, "", recognizedSection, "", summarySection, "", footer, ""].join("\n");
 }

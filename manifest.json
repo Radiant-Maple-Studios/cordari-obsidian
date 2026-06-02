@@ -1,10 +1,10 @@
 {
-  "id": "cordari-notes",
-  "name": "Cordari",
-  "version": "0.1.5",
+  "id": "rovenotes-notes",
+  "name": "RoveNotes",
+  "version": "0.2.0",
   "minAppVersion": "1.4.0",
-  "description": "Sync your Cordari voice recordings and handwritten notes into your vault.",
-  "author": "Cordari",
-  "authorUrl": "https://cordari.ai",
+  "description": "Sync your RoveNotes voice recordings and handwritten notes into your vault.",
+  "author": "RoveNotes",
+  "authorUrl": "https://rovenotes.com",
   "isDesktopOnly": true
 }

@@ -1,16 +1,16 @@
-.cordari-device-code {
+.rovenotes-device-code {
   text-align: center;
   font-size: 2em;
   letter-spacing: 0.2em;
   font-family: monospace;
 }
 
-.cordari-device-link {
+.rovenotes-device-link {
   display: block;
   text-align: center;
   margin-top: 1em;
 }
 
-.cordari-device-pending {
+.rovenotes-device-pending {
   text-align: center;
 }
